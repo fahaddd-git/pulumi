@@ -1684,9 +1684,8 @@ func (ns *namespace) intoIOFiles(ctx *ioContext, parent string) ([]*ioFile, erro
 	// We generate the input and output namespaces when there are enums, regardless of i
 	// they are empty.
 	if ns == nil {
-		panic("TODO: The caller needs to check if this is nil or not first.")
+		return nil, fmt.Errorf("Generating IO files for a nil namespace")
 	}
-	fmt.Println(ns.Debug())
 	// Declare a new file to store the contents exposed at this directory level.
 	var dirRoot = path.Join(parent, ns.name)
 	var filename string
@@ -1695,7 +1694,6 @@ func (ns *namespace) intoIOFiles(ctx *ioContext, parent string) ([]*ioFile, erro
 	} else {
 		filename = path.Join(dirRoot, "output.ts")
 	}
-	fmt.Printf("Generating namespace into IO file: %s\n", filename)
 	var file = newIOFile(filename)
 	// We start every file with the header information.
 	ctx.mod.genHeader(file.writer(), ctx.mod.sdkImports(true, false, dirRoot), ctx.externalImports, ctx.imports)
@@ -1728,13 +1726,14 @@ func (ns *namespace) intoIOFiles(ctx *ioContext, parent string) ([]*ioFile, erro
 		return ns.children[i].name < ns.children[j].name
 	})
 	for i, child := range ns.children {
+		// Defensive coding: child should never be null, but
+		// child.intoIOFiles will break if it is.
+		if child == nil {
+			continue
+		}
 		// At this level, we export any nested definitions from
 		// the next level.
-		var fullPath = path.Join(dirRoot, child.name)
-		fmt.Printf("-----> Exporting file %s with parent %s\n", fullPath, dirRoot)
-		//fmt.Fprintf(file.writer(), "export * as %s from \"%s\";\n", child.name, fullPath)
 		fmt.Fprintf(file.writer(), "export * as %s from \"./%s\";\n", child.name, child.name)
-		// fmt.Fprintf(file.writer(), "export type { %s };", child.name)
 		nestedFiles, err := child.intoIOFiles(ctx, dirRoot)
 		if err != nil {
 			return nil, err
