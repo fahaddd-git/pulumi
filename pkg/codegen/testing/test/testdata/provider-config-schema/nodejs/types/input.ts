@@ -6,5 +6,4 @@ import * as inputs from "../types/input";
 import * as outputs from "../types/output";
 import * as enums from "../types/enums";
 
-export namespace config {
-}
+export * as config from "./config";

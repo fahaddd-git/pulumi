@@ -33,8 +33,6 @@ export function kubeClientSettingsProvideDefaults(val: KubeClientSettings): Kube
     };
 }
 
-export namespace mod1 {
-}
+export * as mod1 from "./mod1";
 
-export namespace mod2 {
-}
+export * as mod2 from "./mod2";

@@ -11,10 +11,4 @@ export interface Child {
     name?: string;
 }
 
-export namespace config {
-    export interface Sandwich {
-        bread?: string;
-        veggies?: string[];
-    }
-
-}
+export * as config from "./config";
