@@ -269,7 +269,7 @@ func TestGetRelativePath(t *testing.T) {
 	}
 	for _, tc := range cases {
 		var ctx = &modContext{mod: tc.mod}
-		var observed = ctx.getRelativePath(tc.dirRoot)
+		var observed = ctx.getRelativePathFromRoot(tc.dirRoot)
 		require.Equal(
 			t,
 			tc.expected,

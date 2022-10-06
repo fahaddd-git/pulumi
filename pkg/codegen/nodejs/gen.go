@@ -1537,34 +1537,29 @@ func (mod *modContext) genConfig(w io.Writer, variables []*schema.Property) erro
 	return nil
 }
 
-func (mod *modContext) getRelativePath(dirRoot string) string {
-	var currPath string
+// The parameter dirRoot is used as the relative path
+func (mod *modContext) getRelativePath() string {
+	rel, err := filepath.Rel(mod.mod, "")
+	contract.Assert(err == nil)
+	return path.Dir(filepath.ToSlash(rel))
+}
+
+// getRelativePathFromRoot returns the path relative to parameter
+// dirRoot, falling back to getRelativePath if its empty.
+// This is useful when a file is nested more deeply than mod.mod indicates.
+func (mod *modContext) getRelativePathFromRoot(dirRoot string) string {
 	if dirRoot == "" {
-		currPath = mod.mod
-	} else {
-		currPath = dirRoot
+		return mod.getRelativePath()
 	}
-	rel, err := filepath.Rel(currPath, "")
+	rel, err := filepath.Rel(dirRoot, "")
 	contract.Assert(err == nil)
 	return path.Dir(filepath.ToSlash(rel))
 }
 
 func (mod *modContext) sdkImports(nested, utilities bool, dirRoot string) []string {
-	imports := []string{"import * as pulumi from \"@pulumi/pulumi\";"}
-
-	// TODO: Skip writing sdkImports for types.inputs/types.outputs as special case.
-	relRoot := mod.getRelativePath(dirRoot)
-	// If this file is generating inputs in /types/, then it will be one level
-	// lower than otherwise.
-	// if typegen {
-	//	relRoot = path.Join("..", relRoot)
-	// }
-	fmt.Printf("Mod: %s -- relRoot: %s\n", mod.mod, relRoot)
+	var imports = []string{"import * as pulumi from \"@pulumi/pulumi\";"}
+	var relRoot = mod.getRelativePathFromRoot(dirRoot)
 	if nested {
-		// TODO: If we're nested, we need to know HOW FAR we're nested!
-		//       this is only for nested TYPE outputs/inputs. Those are
-		//       potentially nested but ALSO nested wthin the types file,
-		//       which makes matters worse since they could be nested even deeper.
 		imports = append(imports, []string{
 			fmt.Sprintf(`import * as inputs from "%s/types/input";`, relRoot),
 			fmt.Sprintf(`import * as outputs from "%s/types/output";`, relRoot),
@@ -1587,7 +1582,7 @@ func (mod *modContext) sdkImports(nested, utilities bool, dirRoot string) []stri
 }
 
 func (mod *modContext) utilitiesImport() string {
-	relRoot := mod.getRelativePath("")
+	relRoot := mod.getRelativePath()
 	return fmt.Sprintf("import * as utilities from \"%s/utilities\";", relRoot)
 }
 
@@ -1609,7 +1604,7 @@ func (mod *modContext) buildImports() (codegen.StringSet, map[string]codegen.Str
 	// Instantiating the default might require an environmental variable. This
 	// uses utilities.
 	if hasDefaultObjects {
-		externalImports.Add(fmt.Sprintf("import * as utilities from \"%s/utilities\";", mod.getRelativePath("")))
+		externalImports.Add(fmt.Sprintf("import * as utilities from \"%s/utilities\";", mod.getRelativePath()))
 	}
 	return externalImports, imports
 }
@@ -2167,7 +2162,7 @@ func (mod *modContext) genIndex(exports []fileInfo) string {
 		} else if len(mod.enums) > 0 {
 			fmt.Fprintf(w, "\n")
 			fmt.Fprintf(w, "// Export enums:\n")
-			rel := mod.getRelativePath("")
+			rel := mod.getRelativePath()
 			var filePath string
 			if mod.mod == "" {
 				filePath = ""
