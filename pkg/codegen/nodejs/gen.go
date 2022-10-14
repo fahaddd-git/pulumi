@@ -1575,14 +1575,14 @@ func (mod *modContext) sdkImports(nested, utilities bool, dirRoot string) []stri
 	}
 
 	if utilities {
-		imports = append(imports, mod.utilitiesImport())
+		imports = append(imports, mod.utilitiesImport(dirRoot))
 	}
 
 	return imports
 }
 
-func (mod *modContext) utilitiesImport() string {
-	relRoot := mod.getRelativePath()
+func (mod *modContext) utilitiesImport(dirRoot string) string {
+	relRoot := mod.getRelativePathFromRoot(dirRoot)
 	return fmt.Sprintf("import * as utilities from \"%s/utilities\";", relRoot)
 }
 
@@ -1755,6 +1755,7 @@ func (ns *namespace) intoIOFiles(ctx *ioContext, parent string) ([]*ioFile, erro
 		var indexPath = path.Join(dirRoot, "index.ts")
 		var file = newIOFile(indexPath)
 		ctx.mod.genHeader(file.writer(), nil, nil, nil)
+		fmt.Fprintf(file.writer(), ctx.mod.utilitiesImport(indexPath))
 		fmt.Fprintf(file.writer(), "export * from \"./%s\";\n", "input")
 		fmt.Fprintf(file.writer(), "export * from \"./%s\";\n", "output")
 		files = append(files, file)
@@ -2126,7 +2127,7 @@ func (mod *modContext) genIndex(exports []fileInfo) string {
 		imports = mod.sdkImports(false, true, "")
 	} else if len(children) > 0 || len(mod.functions) > 0 {
 		// Even if there are no resources, exports ref utilities.
-		imports = append(imports, mod.utilitiesImport())
+		imports = append(imports, mod.utilitiesImport(""))
 	}
 	mod.genHeader(w, imports, nil, nil)
 
