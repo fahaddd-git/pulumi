@@ -1497,7 +1497,7 @@ func (mod *modContext) genConfig(w io.Writer, variables []*schema.Property) erro
 	externalImports, imports := codegen.NewStringSet(), map[string]codegen.StringSet{}
 	referencesNestedTypes := mod.getImports(variables, externalImports, imports)
 
-	mod.genHeader(w, mod.sdkImports(referencesNestedTypes, true, ""), externalImports, imports)
+	mod.genHeader(w, mod.sdkImports(referencesNestedTypes, true), externalImports, imports)
 
 	fmt.Fprintf(w, "declare var exports: any;\n")
 
@@ -1537,53 +1537,73 @@ func (mod *modContext) genConfig(w io.Writer, variables []*schema.Property) erro
 	return nil
 }
 
+// getRelativePath returns a path to the top level of the package
+// relative to directory passed in. You must pass in the name
+// of a directory. If you provide a file name, like "index.ts", it's assumed
+// to be a directory named "index.ts".
+// It's a thin wrapper around the standard library's implementation.
+func getRelativePath(dirname string) string {
+	var rel, err = filepath.Rel(dirname, "")
+	contract.Assert(err == nil)
+	return path.Dir(filepath.ToSlash(rel))
+}
+
 // The parameter dirRoot is used as the relative path
 func (mod *modContext) getRelativePath() string {
-	rel, err := filepath.Rel(mod.mod, "")
-	contract.Assert(err == nil)
-	return path.Dir(filepath.ToSlash(rel))
+	return getRelativePath(mod.mod)
 }
 
-// getRelativePathFromRoot returns the path relative to parameter
-// dirRoot, falling back to getRelativePath if its empty.
-// This is useful when a file is nested more deeply than mod.mod indicates.
-func (mod *modContext) getRelativePathFromRoot(dirRoot string) string {
-	if dirRoot == "" {
-		return mod.getRelativePath()
-	}
-	rel, err := filepath.Rel(dirRoot, "")
-	contract.Assert(err == nil)
-	return path.Dir(filepath.ToSlash(rel))
+// sdkImports generates the imports at the top of a source file.
+// This function is only intended to be called from resource files and
+// at the index. For files nested in the `/types` folder, call
+// sdkImportsForTypes instead.
+func (mod *modContext) sdkImports(nested, utilities bool) []string {
+	return mod.sdkImportsWithPath(nested, utilities, mod.mod)
 }
 
-func (mod *modContext) sdkImports(nested, utilities bool, dirRoot string) []string {
+// sdkImportsWithPath generates the import functions at the top of each file.
+// If nested is true, then the file is assumed not to be at the top-level i.e.
+// it's located in a subfolder of the root, perhaps deeply nested.
+// If utilities is true, then utility functions are imported.
+// filepath injects the path of this file relative to the root of the package.
+func (mod *modContext) sdkImportsWithPath(nested, utilities bool, filepath string) []string {
+	// All files need to import the SDK.
 	var imports = []string{"import * as pulumi from \"@pulumi/pulumi\";"}
-	var relRoot = mod.getRelativePathFromRoot(dirRoot)
+	var relRoot = getRelativePath(filepath)
+	// Add nested imports if enabled.
 	if nested {
-		imports = append(imports, []string{
-			fmt.Sprintf(`import * as inputs from "%s/types/input";`, relRoot),
-			fmt.Sprintf(`import * as outputs from "%s/types/output";`, relRoot),
-		}...)
-
-		if mod.pkg.Language["nodejs"].(NodePackageInfo).ContainsEnums {
-			code := `import * as enums from "%s/types/enums";`
-			if lookupNodePackageInfo(mod.pkg).UseTypeOnlyReferences {
-				code = `import type * as enums from "%s/types/enums";`
-			}
-			imports = append(imports, fmt.Sprintf(code, relRoot))
-		}
+		imports = append(imports, mod.genNestedImports(relRoot)...)
 	}
-
+	// Add utility imports if enabled.
 	if utilities {
-		imports = append(imports, mod.utilitiesImport(dirRoot))
+		imports = append(imports, mod.utilitiesImport(relRoot))
 	}
 
 	return imports
 }
 
-func (mod *modContext) utilitiesImport(dirRoot string) string {
-	relRoot := mod.getRelativePathFromRoot(dirRoot)
+func (mod *modContext) utilitiesImport(relRoot string) string {
 	return fmt.Sprintf("import * as utilities from \"%s/utilities\";", relRoot)
+}
+
+// relRoot is the path that ajoins this module or file with the top-level
+// of the repo. For example, if this file was located in "./foo/index.ts",
+// then relRoot would be "..", since that's the path to the top-level directory.
+func (mod *modContext) genNestedImports(relRoot string) []string {
+	// Always import all input and output types.
+	var imports = []string{
+		fmt.Sprintf(`import * as inputs from "%s/types/input";`, relRoot),
+		fmt.Sprintf(`import * as outputs from "%s/types/output";`, relRoot),
+	}
+	// Next, if there are enums, then we import them too.
+	if mod.pkg.Language["nodejs"].(NodePackageInfo).ContainsEnums {
+		code := `import * as enums from "%s/types/enums";`
+		if lookupNodePackageInfo(mod.pkg).UseTypeOnlyReferences {
+			code = `import type * as enums from "%s/types/enums";`
+		}
+		imports = append(imports, fmt.Sprintf(code, relRoot))
+	}
+	return imports
 }
 
 func (mod *modContext) buildImports() (codegen.StringSet, map[string]codegen.StringSet) {
@@ -1696,7 +1716,12 @@ func (ns *namespace) intoIOFiles(ctx *ioContext, parent string) ([]*ioFile, erro
 	}
 	var file = newIOFile(filename)
 	// We start every file with the header information.
-	ctx.mod.genHeader(file.writer(), ctx.mod.sdkImports(true, false, dirRoot), ctx.externalImports, ctx.imports)
+	ctx.mod.genHeader(
+		file.writer(),
+		ctx.mod.sdkImportsWithPath(true, false, dirRoot),
+		ctx.externalImports,
+		ctx.imports,
+	)
 	// We want to organize the items in the source file by alphabetical order.
 	sort.Slice(ns.types, func(i, j int) bool {
 		return tokenToName(ns.types[i].Token) < tokenToName(ns.types[j].Token)
@@ -1754,10 +1779,12 @@ func (ns *namespace) intoIOFiles(ctx *ioContext, parent string) ([]*ioFile, erro
 	if parent != "./types" && ctx.input {
 		var indexPath = path.Join(dirRoot, "index.ts")
 		var file = newIOFile(indexPath)
-		ctx.mod.genHeader(file.writer(), nil, nil, nil)
-		fmt.Fprintf(file.writer(), ctx.mod.utilitiesImport(indexPath))
-		fmt.Fprintf(file.writer(), "export * from \"./%s\";\n", "input")
-		fmt.Fprintf(file.writer(), "export * from \"./%s\";\n", "output")
+		ctx.mod.genHeader(
+			file.writer(),
+			ctx.mod.sdkImportsWithPath(true, false, dirRoot),
+			ctx.externalImports,
+			ctx.imports,
+		)
 		files = append(files, file)
 	}
 
@@ -2022,7 +2049,7 @@ func (mod *modContext) gen(fs fs) error {
 		referencesNestedTypes := mod.getImportsForResource(r, externalImports, imports, r)
 
 		buffer := &bytes.Buffer{}
-		mod.genHeader(buffer, mod.sdkImports(referencesNestedTypes, true, ""), externalImports, imports)
+		mod.genHeader(buffer, mod.sdkImports(referencesNestedTypes, true), externalImports, imports)
 
 		rinfo, err := mod.genResource(buffer, r)
 		if err != nil {
@@ -2044,7 +2071,7 @@ func (mod *modContext) gen(fs fs) error {
 		referencesNestedTypes := mod.getImports(f, externalImports, imports)
 
 		buffer := &bytes.Buffer{}
-		mod.genHeader(buffer, mod.sdkImports(referencesNestedTypes, true, ""), externalImports, imports)
+		mod.genHeader(buffer, mod.sdkImports(referencesNestedTypes, true), externalImports, imports)
 
 		funInfo, err := mod.genFunction(buffer, f)
 		if err != nil {
@@ -2124,10 +2151,10 @@ func (mod *modContext) genIndex(exports []fileInfo) string {
 	var imports []string
 	// Include the SDK import if we'll be registering module resources.
 	if len(mod.resources) != 0 {
-		imports = mod.sdkImports(false, true, "")
+		imports = mod.sdkImports(false, true)
 	} else if len(children) > 0 || len(mod.functions) > 0 {
 		// Even if there are no resources, exports ref utilities.
-		imports = append(imports, mod.utilitiesImport(""))
+		imports = append(imports, mod.utilitiesImport(mod.getRelativePath()))
 	}
 	mod.genHeader(w, imports, nil, nil)
 
